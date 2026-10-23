@@ -23,7 +23,12 @@ DATA_START = pd.Timestamp("2004-03-10 18:00:00")
 # feature, model, or preprocessing decisions.
 TEST_START = pd.Timestamp("2005-01-17 00:00:00")
 
-N_SPLITS = 5
+# The development grid is cut into N_BLOCKS equal blocks; the last N_SPLITS
+# blocks are the validation windows (contract v1.1). Earlier blocks only ever
+# train, so every validation fold is trained on at least half of the period.
+# n_splits=5 reproduces the v1.0 folds (same boundaries) for sensitivity checks.
+N_BLOCKS = 6
+N_SPLITS = 3
 # No gap between training and validation windows. Features use only current
 # and past low-cost inputs, never the target, so validation rows cannot leak
 # label information into training; the final test also follows the
@@ -49,32 +54,38 @@ def dev_folds(
     *,
     data_start: pd.Timestamp = DATA_START,
     n_splits: int = N_SPLITS,
+    n_blocks: int = N_BLOCKS,
     gap_hours: int = GAP_HOURS,
     dev_end: pd.Timestamp = TEST_START,
 ) -> list[Fold]:
     """Expanding-window folds over the development period's hourly grid.
 
-    Like ``TimeSeriesSplit``, the grid is cut into ``n_splits + 1`` equal
-    blocks: training starts with the first block and each later block is one
-    validation window. Validation boundaries are rounded to the nearest
-    midnight so they are easy to document; the last window ends at ``dev_end``.
+    As in ``TimeSeriesSplit(n_splits=n_blocks - 1)``, the grid is cut into
+    ``n_blocks`` equal blocks whose boundaries are rounded to the nearest
+    midnight; the last window ends at ``dev_end``. Only the last ``n_splits``
+    blocks are used as validation windows, each trained on everything before
+    it. Changing ``n_splits`` therefore selects windows without moving any
+    boundary.
 
     Call ``dev_folds()`` with no arguments for the shared protocol. The
     keyword-only overrides exist for unit tests on other grids and for
-    documented sensitivity checks (e.g. ``gap_hours=24``). Never pass the
-    first timestamp of a filtered or feature-engineered frame as
+    documented sensitivity checks (``n_splits=5``, ``gap_hours=24``). Never
+    pass the first timestamp of a filtered or feature-engineered frame as
     ``data_start``: dropping leading rows would silently move every boundary.
     """
+    if not 1 <= n_splits <= n_blocks - 1:
+        raise ValueError("n_splits must be between 1 and n_blocks - 1")
     hours = pd.date_range(data_start, dev_end, freq="h", inclusive="left")
-    val_size = len(hours) // (n_splits + 1)
-    first = len(hours) - n_splits * val_size
-    cuts = [hours[first + k * val_size].round("D") for k in range(n_splits)] + [dev_end]
+    block = len(hours) // n_blocks
+    first = len(hours) - (n_blocks - 1) * block
+    cuts = [hours[first + k * block].round("D") for k in range(n_blocks - 1)] + [dev_end]
     if any(b <= a for a, b in zip([data_start, *cuts[:-1]], cuts)):
         raise ValueError("Fold boundaries are not strictly increasing")
 
     gap = pd.Timedelta(hours=gap_hours)
     folds = []
-    for val_start, val_end in zip(cuts[:-1], cuts[1:]):
+    windows = list(zip(cuts[:-1], cuts[1:]))[-n_splits:]
+    for val_start, val_end in windows:
         train_end = val_start - gap
         if train_end <= data_start:
             raise ValueError("Gap leaves an empty training window")

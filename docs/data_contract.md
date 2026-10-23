@@ -1,6 +1,6 @@
 # Data Contract & Baseline Evaluation Protocol
 
-**Version 1.0** (Issue #1)
+**Version 1.1** (Issue #1)
 
 All numbers below were measured from the downloaded file with the code in `src/air_quality/` unless marked as published metadata. The tests in `tests/test_data.py` and `tests/test_split.py` pin the key values.
 
@@ -28,7 +28,8 @@ This document fixes what every experiment must share so that results can be comp
 
 | Version | Change |
 |---|---|
-| 1.0 | Initial contract: verified source, loader, eligibility rule, `TEST_START`, CV folds, `GAP_HOURS = 0` |
+| 1.0 | Initial contract: verified source, loader, eligibility rule, `TEST_START`, five expanding CV folds, `GAP_HOURS = 0` |
+| 1.1 | Primary CV uses the last three of the same five windows; boundaries, `TEST_START`, eligibility and `GAP_HOURS` unchanged (§9). Decided before any model was trained |
 
 ## 1. Source and reproducibility
 
@@ -131,17 +132,41 @@ The 330 hours with a valid target but no inputs (245 in development, 85 in the f
 
 ## 9. Time-aware cross-validation (`dev_folds`, `cv_indices`)
 
-Folds use expanding windows. The fold boundaries are timestamps on the development period's complete hourly grid: the grid from `DATA_START` (2004-03-10 18:00) to `TEST_START` is cut into 6 equal blocks, and boundaries are rounded to midnight. Boundaries come from these constants, never from a filtered index, so no amount of row filtering can move them. Call `dev_folds()` with no arguments. Its overrides are keyword-only: `data_start` exists for unit tests on synthetic grids, and `gap_hours` for documented sensitivity checks. A positional call such as `dev_folds(X.index[0])` raises an error, because a feature-engineered frame that dropped its first 24 rows would otherwise shift every boundary. Eligibility is applied inside each fold afterwards. Every experiment uses these same folds, and therefore the same comparison samples.
+Folds use expanding windows. The fold boundaries are timestamps on the development period's complete hourly grid. The grid from `DATA_START` (2004-03-10 18:00) to `TEST_START` is cut into `N_BLOCKS = 6` equal blocks, with boundaries rounded to midnight. **The primary protocol (`N_SPLITS = 3`) uses the last three blocks as validation windows.** Each window is trained on everything before it, and the first three blocks are used only for training. Boundaries come from these constants, never from a filtered index, so no amount of row filtering can move them. Call `dev_folds()` with no arguments. Its overrides are keyword-only: `data_start` exists for unit tests on synthetic grids, and `n_splits` and `gap_hours` exist for the sensitivity checks described below. A positional call such as `dev_folds(X.index[0])` raises an error, because a feature-engineered frame that dropped its first 24 rows would otherwise shift every boundary. Eligibility is applied inside each fold afterwards. Every experiment uses these same folds, and therefore the same comparison samples.
+
+**Primary folds (v1.1):**
 
 | Fold | Train | Validation | Train hours (eligible) | Val hours (inputs available / eligible) | Val eligible share |
 |---:|---|---|---:|---:|---:|
-| 0 | 2004-03-10 18:00 → 2004-05-02 | 2004-05-02 → 2004-06-23 | 1,254 (983) | 1,248 (1,196 / 987) | 0.791 |
-| 1 | 2004-03-10 18:00 → 2004-06-23 | 2004-06-23 → 2004-08-14 | 2,502 (1,970) | 1,248 (1,243 / 976) | 0.782 |
-| 2 | 2004-03-10 18:00 → 2004-08-14 | 2004-08-14 → 2004-10-05 | 3,750 (2,946) | 1,248 (1,184 / 771) | 0.618 |
-| 3 | 2004-03-10 18:00 → 2004-10-05 | 2004-10-05 → 2004-11-26 | 4,998 (3,717) | 1,248 (1,248 / 936) | 0.750 |
-| 4 | 2004-03-10 18:00 → 2004-11-26 | 2004-11-26 → 2005-01-17 | 6,246 (4,653) | 1,248 (1,116 / 1,004) | 0.804 |
+| 0 | 2004-03-10 18:00 → 2004-08-14 | 2004-08-14 → 2004-10-05 | 3,750 (2,946) | 1,248 (1,184 / 771) | 0.618 |
+| 1 | 2004-03-10 18:00 → 2004-10-05 | 2004-10-05 → 2004-11-26 | 4,998 (3,717) | 1,248 (1,248 / 936) | 0.750 |
+| 2 | 2004-03-10 18:00 → 2004-11-26 | 2004-11-26 → 2005-01-17 | 6,246 (4,653) | 1,248 (1,116 / 1,004) | 0.804 |
 
-Intervals are half-open (`[start, end)`), and all boundaries are at 00:00. Fold 2 has the smallest eligible share because of the August–October 2004 target gaps, not because of sensor outages: inputs are available in 1,184 of its 1,248 hours.
+- Intervals are half-open (`[start, end)`), and all boundaries are at 00:00.
+- Training sets hold 2,946–4,653 eligible rows, which is 52–82% of the 5,657 the final model will use. Validation sets hold 2,711 eligible rows in total.
+- Fold 0 has the smallest eligible share because of the August–October 2004 target gaps, not because of sensor outages: inputs are available in 1,184 of its 1,248 hours.
+
+### Why three windows (v1.1)
+
+Version 1.0 used all five windows of the same grid, which added two earlier folds: training from 2004-03-10 to 05-02 and to 06-23, validated on 05-02 → 06-23 and 06-23 → 08-14. Those folds test a different situation from the final one:
+
+- **Shorter calibration history.** They train on 52 and 104 days, or 983 and 1,970 eligible rows, which is 17–35% of the final training set.
+- **More different environmental conditions.** Measured on development inputs only, 8.3% of the first fold's validation hours have a temperature outside the range seen in its training data. In the second fold, 22.1% have an absolute humidity outside it. In the three primary folds every such share is ≤ 3.1%.
+
+The final model is trained on about ten months covering spring to early winter and then applied to the following period. The primary folds are closer to that situation.
+
+**Limits of this choice.**
+- It is a choice of scenario, made before any model was trained and without using model scores or the final test.
+- It does not claim the three-fold estimate is statistically better in general, nor that the earlier folds are unfair. They are a valid test of short-history calibration under unseen conditions, which is simply not the question asked here.
+- The costs:
+  - fewer validation rows (2,711 instead of 4,674);
+  - three per-fold estimates instead of five, so the spread across folds is less well estimated;
+  - validation covers only mid-August to mid-January, with no spring window.
+- Under the experiment-selection rule in Issue #4, "a majority of folds" now means at least 2 of 3.
+
+### Sensitivity checks
+
+`dev_folds(n_splits=5)` reproduces the v1.0 folds, with identical boundaries. `dev_folds(gap_hours=24)` adds a gap. Either may be reported as a secondary check, alongside the primary results and clearly labelled. **Neither may replace the primary protocol after model results have been seen.** Changing the primary protocol follows §0 and requires re-running every compared experiment.
 
 **Using the folds with scikit-learn:** build `cv_indices` from the exact index of the `X`/`y` being passed, after every row filter, including any rows that a later step drops. Pass the result as `cv=` to `cross_validate`, which accepts it. `cross_val_predict` does **not** accept it: with expanding windows the first block is training-only, so the folds are not a partition. Produce out-of-fold predictions per fold instead.
 
@@ -178,7 +203,7 @@ The remaining effect is that validation hours just after the boundary sit close 
 | `eligible_mask(df)`, `inputs_available(df)` | Row-eligibility rules |
 | `TARGET`, `SENSOR_COLS`, `ENV_COLS`, `INPUT_COLS`, `FORBIDDEN_COLS` | Column roles |
 | `TEST_START`, `split_dev_test(df)` | Final-test boundary and split |
-| `DATA_START`, `N_SPLITS`, `GAP_HOURS`, `dev_folds()`, `Fold` | CV fold definition (call `dev_folds()` with defaults) |
+| `DATA_START`, `N_BLOCKS`, `N_SPLITS`, `GAP_HOURS`, `dev_folds()`, `Fold` | CV fold definition (call `dev_folds()` with defaults) |
 | `cv_indices(index, folds)` | Positional train/validation indices for any (filtered) index; usable as `cv=` in `cross_validate` |
 | `fold_summary(dev, folds)` | Per-fold dates, input availability and eligible counts |
 

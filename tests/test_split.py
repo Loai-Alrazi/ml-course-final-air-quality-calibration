@@ -41,7 +41,7 @@ def test_split_boundary_ignores_target_filtering():
 
 def test_folds_are_expanding_ordered_and_inside_dev():
     folds = dev_folds(data_start=DATA_START)
-    assert len(folds) == 5
+    assert len(folds) == 3
     for prev, cur in zip(folds, folds[1:]):
         assert cur.val_start == prev.val_end            # contiguous, non-overlapping windows
         assert cur.train_end > prev.train_end           # expanding training window
@@ -50,6 +50,21 @@ def test_folds_are_expanding_ordered_and_inside_dev():
         assert f.train_end <= f.val_start < f.val_end <= TEST_START
         assert f.val_start == f.val_start.normalize()   # midnight boundaries
     assert folds[-1].val_end == TEST_START
+
+
+def test_primary_folds_are_last_windows_of_the_five_fold_grid():
+    # v1.1 selects windows; it never moves a boundary. n_splits=5 reproduces v1.0.
+    five = dev_folds(n_splits=5)
+    assert len(five) == 5
+    assert dev_folds() == five[-3:]
+    dev_hours = (TEST_START - DATA_START) / pd.Timedelta(hours=1)
+    first = dev_folds()[0]
+    assert (first.train_end - first.train_start) / pd.Timedelta(hours=1) >= dev_hours / 2
+
+
+def test_invalid_number_of_splits_raises():
+    with pytest.raises(ValueError):
+        dev_folds(n_splits=6)
 
 
 def test_gap_separates_train_and_validation():
@@ -133,8 +148,12 @@ def test_real_split_and_folds_match_documented_values():
     assert (int(eligible_mask(dev).sum()), int(eligible_mask(test).sum())) == (5657, 1687)
 
     folds = dev_folds()
-    assert [str(f.val_start.date()) for f in folds] == [
-        "2004-05-02", "2004-06-23", "2004-08-14", "2004-10-05", "2004-11-26"]
+    assert [str(f.val_start.date()) for f in folds] == ["2004-08-14", "2004-10-05", "2004-11-26"]
     summary = fold_summary(dev, folds)
-    assert summary["val_eligible"].tolist() == [987, 976, 771, 936, 1004]
-    assert summary["val_inputs_available"].tolist() == [1196, 1243, 1184, 1248, 1116]
+    assert summary["train_eligible"].tolist() == [2946, 3717, 4653]
+    assert summary["val_eligible"].tolist() == [771, 936, 1004]
+    assert summary["val_inputs_available"].tolist() == [1184, 1248, 1116]
+
+    # v1.0 five-fold sensitivity view keeps its documented values.
+    five = fold_summary(dev, dev_folds(n_splits=5))
+    assert five["val_eligible"].tolist() == [987, 976, 771, 936, 1004]
