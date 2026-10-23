@@ -40,7 +40,7 @@ def test_split_boundary_ignores_target_filtering():
 
 
 def test_folds_are_expanding_ordered_and_inside_dev():
-    folds = dev_folds(DATA_START)
+    folds = dev_folds(data_start=DATA_START)
     assert len(folds) == 5
     for prev, cur in zip(folds, folds[1:]):
         assert cur.val_start == prev.val_end            # contiguous, non-overlapping windows
@@ -53,7 +53,7 @@ def test_folds_are_expanding_ordered_and_inside_dev():
 
 
 def test_gap_separates_train_and_validation():
-    for f in dev_folds(DATA_START, gap_hours=24):
+    for f in dev_folds(gap_hours=24):
         assert f.val_start - f.train_end == pd.Timedelta(hours=24)
 
 
@@ -62,7 +62,7 @@ def test_cv_indices_respect_fold_bounds_after_filtering():
     df.iloc[::7, df.columns.get_loc(TARGET)] = np.nan
     dev, _ = split_dev_test(df)
     usable = dev[eligible_mask(dev)]
-    folds = dev_folds(DATA_START)
+    folds = dev_folds(data_start=DATA_START)
     for (train, val), f in zip(cv_indices(usable.index, folds), folds):
         assert usable.index[train].max() < f.train_end
         assert usable.index[val].min() >= f.val_start
@@ -72,7 +72,7 @@ def test_cv_indices_respect_fold_bounds_after_filtering():
 
 def test_folds_never_reach_the_final_test():
     df = hourly_frame()
-    folds = dev_folds(DATA_START)
+    folds = dev_folds(data_start=DATA_START)
     for train, val in cv_indices(df.index, folds):
         assert df.index[np.concatenate([train, val])].max() < TEST_START
 
@@ -80,13 +80,16 @@ def test_folds_never_reach_the_final_test():
 def test_default_folds_do_not_depend_on_filtered_data():
     # Boundaries come from the DATA_START constant, so filtering rows away
     # (even the first ones) can never move them.
-    assert dev_folds() == dev_folds(DATA_START)
+    assert dev_folds() == dev_folds(data_start=DATA_START)
     df = hourly_frame()
-    df.iloc[:30, df.columns.get_loc(TARGET)] = np.nan
+    df.iloc[:30, df.columns.get_loc(TARGET)] = np.nan   # e.g. leading rows lost to lag features
     dev, _ = split_dev_test(df)
     usable = dev[eligible_mask(dev)]
     assert usable.index[0] != DATA_START
-    assert [f.val_start for f in dev_folds()] == [f.val_start for f in dev_folds(DATA_START)]
+    # The hazard the keyword-only signature guards against:
+    assert dev_folds(data_start=usable.index[0]) != dev_folds()
+    with pytest.raises(TypeError):
+        dev_folds(usable.index[0])   # positional start is rejected
 
 
 def test_cv_indices_work_with_sklearn_cross_validate():
@@ -113,7 +116,7 @@ def test_cross_val_predict_is_not_supported():
 def test_fold_summary_counts():
     df = hourly_frame()
     dev, _ = split_dev_test(df)
-    summary = fold_summary(dev, dev_folds(DATA_START))
+    summary = fold_summary(dev, dev_folds(data_start=DATA_START))
     assert (summary["val_eligible"] == summary["val_hours"]).all()   # synthetic data: all eligible
     assert summary["train_hours"].is_monotonic_increasing
 

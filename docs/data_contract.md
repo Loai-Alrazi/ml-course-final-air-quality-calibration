@@ -1,6 +1,34 @@
-# Data Contract
+# Data Contract & Baseline Evaluation Protocol
+
+**Version 1.0** (Issue #1)
 
 All numbers below were measured from the downloaded file with the code in `src/air_quality/` unless marked as published metadata. The tests in `tests/test_data.py` and `tests/test_split.py` pin the key values.
+
+## 0. How to use and change this contract
+
+This document fixes what every experiment must share so that results can be compared. It does not restrict how team members design features, models or analyses within those rules.
+
+**Fixed scientific constraints.** These follow from the problem definition and `PROJECT_SPEC.md`. They change only if the specification changes.
+
+- The target is `CO(GT)`. `FORBIDDEN_COLS` and current or past `CO(GT)` are never model inputs.
+- Features use only information available at prediction time: current and past low-cost inputs, and the timestamp.
+- The final test (from `TEST_START`) stays isolated. It is never used for feature, model or preprocessing choices, and it is evaluated once, after decisions are frozen.
+- Boundaries are fixed in time before any row filtering. Learned preprocessing is fitted on training rows only.
+- All experiments that are compared with each other use the same protocol version: the same folds and the same eligibility rule.
+
+**Current baseline decisions.** These are revisable with justification: CSV as the reference file; the `TEST_START` value; the eligibility rule; the number and placement of CV folds; `GAP_HOURS`; naive handling of local timestamps; loader details.
+
+**Free within the protocol (no approval needed):** any feature-engineering, EDA or modeling experiment that runs on development data, through `dev_folds()` and `cv_indices()`, without breaking a fixed constraint. Report every such experiment, including unsuccessful ones.
+
+**Changing a baseline decision or a shared interface:**
+
+1. Open a pull request that changes `data.py` or `split.py` (owned by Issue #1). State the reason and the expected effect on comparisons.
+2. Update the affected tests and this document, and bump the version with a one-line entry in the change log below.
+3. The Project Lead reviews it. If the change alters folds or eligibility, comparisons already run under the old version are re-run before they are compared with new ones.
+
+| Version | Change |
+|---|---|
+| 1.0 | Initial contract: verified source, loader, eligibility rule, `TEST_START`, CV folds, `GAP_HOURS = 0` |
 
 ## 1. Source and reproducibility
 
@@ -103,7 +131,7 @@ The 330 hours with a valid target but no inputs (245 in development, 85 in the f
 
 ## 9. Time-aware cross-validation (`dev_folds`, `cv_indices`)
 
-Folds use expanding windows. The fold boundaries are timestamps on the development period's complete hourly grid: the grid from `DATA_START` (2004-03-10 18:00) to `TEST_START` is cut into 6 equal blocks, and boundaries are rounded to midnight. Boundaries come from these constants, never from a filtered index, so no amount of row filtering can move them. Eligibility is applied inside each fold afterwards. Every experiment uses these same folds, and therefore the same comparison samples.
+Folds use expanding windows. The fold boundaries are timestamps on the development period's complete hourly grid: the grid from `DATA_START` (2004-03-10 18:00) to `TEST_START` is cut into 6 equal blocks, and boundaries are rounded to midnight. Boundaries come from these constants, never from a filtered index, so no amount of row filtering can move them. Call `dev_folds()` with no arguments. Its overrides are keyword-only: `data_start` exists for unit tests on synthetic grids, and `gap_hours` for documented sensitivity checks. A positional call such as `dev_folds(X.index[0])` raises an error, because a feature-engineered frame that dropped its first 24 rows would otherwise shift every boundary. Eligibility is applied inside each fold afterwards. Every experiment uses these same folds, and therefore the same comparison samples.
 
 | Fold | Train | Validation | Train hours (eligible) | Val hours (inputs available / eligible) | Val eligible share |
 |---:|---|---|---:|---:|---:|

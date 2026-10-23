@@ -46,6 +46,7 @@ def split_dev_test(df: pd.DataFrame, test_start: pd.Timestamp = TEST_START):
 
 
 def dev_folds(
+    *,
     data_start: pd.Timestamp = DATA_START,
     n_splits: int = N_SPLITS,
     gap_hours: int = GAP_HOURS,
@@ -57,6 +58,12 @@ def dev_folds(
     blocks: training starts with the first block and each later block is one
     validation window. Validation boundaries are rounded to the nearest
     midnight so they are easy to document; the last window ends at ``dev_end``.
+
+    Call ``dev_folds()`` with no arguments for the shared protocol. The
+    keyword-only overrides exist for unit tests on other grids and for
+    documented sensitivity checks (e.g. ``gap_hours=24``). Never pass the
+    first timestamp of a filtered or feature-engineered frame as
+    ``data_start``: dropping leading rows would silently move every boundary.
     """
     hours = pd.date_range(data_start, dev_end, freq="h", inclusive="left")
     val_size = len(hours) // (n_splits + 1)
