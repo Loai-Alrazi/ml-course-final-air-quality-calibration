@@ -30,6 +30,5 @@ kaggle.json
 # Editors and local tooling
 .vscode/
 .idea/
-.claude/settings.local.json
 Thumbs.db
 .DS_Store
