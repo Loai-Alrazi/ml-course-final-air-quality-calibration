@@ -2,7 +2,7 @@
 
 **معايرة مستشعرات جودة الهواء باستخدام تعلم الآلة**
 
-> **Status:** Repository bootstrap only. No data has been analysed and no models have been trained yet. This README will be updated as each issue is completed.
+> **Status:** Data foundation in place (Issue #1): verified dataset, data contract, loading, eligibility rules, chronological split and CV folds. EDA (#2), feature engineering (#3) and modeling (#4) have not started; there are no model results yet.
 
 ## Problem
 
@@ -19,8 +19,8 @@ This is an academic project. Its models must not be presented as a certified rep
 - **Source:** UCI Machine Learning Repository — [Air Quality](https://archive.ics.uci.edu/dataset/360/air+quality)
 - **DOI:** [10.24432/C59K5F](https://doi.org/10.24432/C59K5F)
 - **Citation:** Vito, S. (2008). Air Quality [Dataset]. UCI Machine Learning Repository. https://doi.org/10.24432/C59K5F
-- **Published description:** 9,358 hourly records, March 2004 – February 2005, one Italian roadside location; missing values tagged as `-200`. These characteristics will be verified against the downloaded file in Issue #1.
-- **Licensing note:** the UCI page lists CC BY 4.0, while the dataset description states research-only use. To stay conservative, **raw data is not committed to this repository**. Download instructions will be added in Issue #1.
+- **Verified file:** 9,357 hourly records from 2004-03-10 18:00 to 2005-04-04 14:00 on a complete hourly grid, from one Italian roadside location; missing values tagged as `-200`. The published description (9,358 records, March 2004 – February 2005) differs slightly; see [docs/data_contract.md](docs/data_contract.md).
+- **Licensing note:** the UCI page lists CC BY 4.0, while the dataset description states research-only use. To stay conservative, **raw data is not committed to this repository**; it is downloaded and hash-verified locally (see Setup).
 
 ## Work plan
 
@@ -67,7 +67,14 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-Data download, test, and experiment commands will be documented here as the corresponding issues are completed.
+Download and verify the dataset (saved to the git-ignored `data/raw/`), then run the tests:
+
+```bash
+python -m air_quality.data
+pytest -q
+```
+
+The data contract, chronological split, and CV folds are documented in [docs/data_contract.md](docs/data_contract.md). Experiment commands will be added as the corresponding issues are completed.
 
 ## Contributing
 
