@@ -282,6 +282,6 @@ When time is limited:
 - Reduce optional scope before weakening evaluation validity.
 - Do not invent results or conceal unsuccessful experiments.
 
-**Claude or any delegated coding agent must not autonomously expand the project scope beyond this specification.**
+**No delegated coding agent may autonomously expand the project scope beyond this specification.**
 
 This specification is the primary project contract. The deep-research report is supporting evidence. The official dataset and its actual downloaded contents are the final authority on data structure.
