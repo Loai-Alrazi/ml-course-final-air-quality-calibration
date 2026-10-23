@@ -178,7 +178,7 @@ Do not claim that sensor drift has been proven to cause performance deterioratio
 
 ## 11. Team and Ownership
 
-The project has four proposed contributors, subject to instructor approval for team submission.
+The project has four contributors; team submission has been approved by the instructor.
 
 **Issue 01 — Loai-Alrazi (Project Lead)**  
 Problem framing, dataset verification, data contract, ingestion, chronological split, and integration oversight.

@@ -33,7 +33,7 @@ This is an academic project. Its models must not be presented as a certified rep
 
 Execution order: #1 first. After #1 is merged, #2 and #3 can proceed in parallel, and #4 can start the baselines. Feature-engineering experiments in #4 wait for #3. The final chronological test is run once, by the Project Lead, after model and feature decisions are frozen.
 
-Team submission is pending instructor approval.
+Team submission has been approved by the instructor.
 
 ## Repository layout
 
@@ -80,7 +80,7 @@ The data contract, chronological split, and CV folds are documented in [docs/dat
 
 - Work on a branch named `issue-<N>-<short-name>` and open a pull request that references its issue (`Closes #N`).
 - Change only the files owned by your issue; request changes to shared code through its owner.
-- `pytest -q` must pass before review. No pull request is merged without review.
+- `pytest -q` must pass before review. `main` is protected: changes arrive only through pull requests, and each needs the Project Lead's approval (code owner) before merging.
 - Never commit raw data, credentials, or tokens.
 
 See [docs/PROJECT_SPEC.md](docs/PROJECT_SPEC.md) for the full contract.
