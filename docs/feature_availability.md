@@ -106,14 +106,14 @@ A total of **30 engineered features** are provided across 5 modular groups:
 3. **`rolling` Group:**
    * **Leakage Assessment:** Uses past readings only because `shift(1)` is applied strictly before the rolling window.
    * **Caveat for Downstream Modeling (#4):** Because `min_periods=1`, the rolling mean is built from whatever valid readings exist within the window. Just after an unobserved outage, the rolling mean can rest on very few hours. On the development grid:
-     * 93 eligible rows get a 24h mean from fewer than 12 readings, and 7 from a single reading;
-     * For the 6h mean, 12 eligible rows use a single reading.
+     * 83 eligible rows get a 24h mean from fewer than 12 readings, and 6 from a single reading;
+     * For the 6h mean, 10 eligible rows use a single reading.
      This is not leakage, and no artificial threshold is required; it is noted so that Issue #4 can interpret feature variance appropriately.
 4. **`env_interaction` Group:**
    * **Leakage Assessment:** Uses only readings available at the current prediction hour $t$.
 5. **`missing_ind` Group:**
    * **Definition & Function:** Captures recent outage history ("the low-cost device had no inputs at $t-1\text{ h}$ / $t-24\text{ h}$").
-   * **Leakage Assessment:** On this dataset, low-cost sensor outages occur all-or-nothing (8,991 hours have every input and 366 have none). A current-hour indicator would always be 0 on eligible rows (which require current inputs to be present); thus lagged indicators are the only informative formulation. In the development period, `inputs_missing_lag_1h == 1` occurs on exactly 14 eligible rows, and `inputs_missing_lag_24h == 1` on 171 eligible rows.
+   * **Leakage Assessment:** On this dataset, low-cost sensor outages occur all-or-nothing (8,991 hours have every input and 366 have none). A current-hour indicator would always be 0 on eligible rows (which require current inputs to be present); thus lagged indicators are the only informative formulation. In the development period, `inputs_missing_lag_1h == 1` occurs on exactly 11 eligible rows, and `inputs_missing_lag_24h == 1` on 138 eligible rows.
 
 ---
 
