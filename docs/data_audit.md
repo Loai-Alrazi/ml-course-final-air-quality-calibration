@@ -3,15 +3,15 @@
 **Project:** Time-Aware Air Quality Sensor Calibration: CO Estimation and Drift Evaluation  
 **Issue:** #2 — EDA & Data Quality  
 **Author:** Emran Yaseen Al-Sabry (`EmranYaseen-ALSabry`)  
-**Status:** Complete  
+**Status:** Complete (Revised per Project Lead Review)  
 **Date:** 2026-10-24  
-**Data Contract Version:** v1.1  
+**Data Contract Version:** v1.1 (`docs/data_contract.md`)  
 
 ---
 
 ## 1. Executive Summary & Objective
 
-This data audit establishes the empirical foundation for all downstream feature engineering (Issue #3) and model training (Issue #4). In strict accordance with `docs/data_contract.md` (v1.1) and `docs/problem_definition.md`:
+This data audit establishes the empirical foundation for downstream feature engineering (Issue #3) and model training (Issue #4). In strict accordance with `docs/data_contract.md` (v1.1) and `docs/problem_definition.md`:
 
 1. **Zero Data Leakage:** Any exploratory analysis, correlation evaluation, or distribution profiling linking input features to the target `CO(GT)` is conducted strictly on the **Development Period** (`2004-03-10 18:00` to `2005-01-16 23:00`). The **Final Test Period** (`TEST_START = 2005-01-17 00:00`) remains strictly isolated.
 2. **Defensible Reporting:** All reported findings are based on exact measured quantities verified against the official UCI Air Quality raw CSV.
@@ -58,21 +58,23 @@ The missingness profile across the dataset was audited thoroughly:
 
 1. **All-or-Nothing Input Sensor Outages:**
    * Across the 9,357 hours, all 5 low-cost sensors and all 3 environmental variables (`T`, `RH`, `AH`) are missing **simultaneously in exactly 366 hours**.
-   * There are **0 hours with partial input sensor availability**. If any low-cost sensor is active, all 8 input columns are present.
+   * There are **0 hours with partial input sensor availability**.
    * Input outages occur across **16 discrete outage events**. The longest continuous input outage lasts **76 consecutive hours** (observed in February 2005 during the test period), followed by runs of 75h, 52h, 45h, and 38h.
 2. **Clustered Reference Target Gaps:**
-   * The reference analyzer `CO(GT)` suffers **1,683 missing hours** distributed across **187 separate outage events**.
+   * The reference analyzer `CO(GT)` suffers **1,683 missing hours** distributed across **187 separate outage episodes**.
    * The longest continuous target outages are:
-     * **173 hours:** 2004-10-13 to 2004-10-20.
-     * **146 hours:** April 2004.
-     * **142 hours:** October 2004.
-     * **122 hours:** August 2004.
-     * **96 hours:** December 2004.
-3. **Cross-Availability Breakdown:**
+     * **174 hours:** 2004-10-13 10:00 → 2004-10-20 15:00.
+     * **147 hours:** 2004-04-17 02:00 → 2004-04-23 04:00 (April 2004).
+     * **143 hours:** 2004-10-01 17:00 → 2004-10-07 15:00 (October 2004).
+     * **123 hours:** 2004-07-26 02:00 → 2004-07-31 04:00 (late July 2004).
+     * **97 hours:** 2004-12-28 00:00 → 2005-01-01 00:00 (late December 2004).
+3. **Monthly Target Availability Variation:**
+   * The proportion of valid `CO(GT)` hours ranges widely: October 2004 (52.8%) and August 2004 (64.1%) have high missingness, while February–April 2005 reaches 97–99% completeness.
+4. **Cross-Availability Breakdown:**
    * Hours where inputs are absent but reference target is present: **330 hours** (245 in dev, 85 in test).
    * Hours where both inputs and target are absent: **36 hours** (35 in dev, 1 in test).
 
-Visualized in: `reports/figures/eda/01_missingness_timeline.png`.
+Visualized in: `../reports/figures/eda/01_missingness_timeline.png`.
 
 ---
 
@@ -81,13 +83,13 @@ Visualized in: `reports/figures/eda/01_missingness_timeline.png`.
 Eligibility for training and primary evaluation is governed strictly by:
 $$\text{eligible} = (\text{CO(GT) is not NaN}) \land (\text{inputs\_available})$$
 
+See `docs/data_contract.md` §7 for the formal protocol definition.
+
 | Partition | Grid Hours | Inputs Available | Valid Target | Both Present (**Eligible**) | Eligible Share |
 |:---|:---:|:---:|:---:|:---:|:---:|
 | **Full Dataset** | 9,357 | 8,991 (96.09%) | 7,674 (82.01%) | **7,344** | **78.49%** |
 | **Development Period** (`< 2005-01-17`) | 7,494 | 7,214 (96.26%) | 5,902 (78.76%) | **5,657** | **75.49%** |
 | **Final Test Period** (`≥ 2005-01-17`) | 1,863 | 1,777 (95.38%) | 1,772 (95.12%) | **1,687** | **90.55%** |
-
-> **Critical Note:** The final test period has a significantly higher proportion of valid target observations (90.55% vs. 75.49%) because the reference analyzer was considerably more reliable in early 2005 than in autumn 2004.
 
 ---
 
@@ -101,16 +103,14 @@ $$\text{eligible} = (\text{CO(GT) is not NaN}) \land (\text{inputs\_available})$
 |:---|:---:|:---|
 | **Count** | 5,657 | Evaluated sample size |
 | **Mean** | 2.19 mg/m³ | Average reference CO concentration |
-| **Median** | 1.90 mg/m³ | Central tendency (less sensitive to peaks) |
-| **Std Dev** | 1.46 mg/m³ | Substantial hourly dispersion |
-| **Min** | 0.10 mg/m³ | Sensor detection limit / clean air |
+| **Median** | 1.90 mg/m³ | Central tendency |
+| **Std Dev** | 1.46 mg/m³ | Hourly dispersion |
+| **Min** | 0.10 mg/m³ | Lower boundary |
 | **25th Percentile** | 1.10 mg/m³ | Lower quartile |
 | **75th Percentile** | 2.90 mg/m³ | Upper quartile |
-| **95th Percentile** | 5.00 mg/m³ | Heavy pollution threshold |
-| **Max** | 11.90 mg/m³ | Peak pollution event |
+| **95th Percentile** | **4.90 mg/m³** | Upper 5% threshold |
+| **Max** | 11.90 mg/m³ | Maximum recorded concentration |
 | **Skewness** | **+1.36** | Moderately positive (right-skewed tail) |
-
-The distribution follows an approximate log-normal shape typical of urban air pollutants, where background concentrations dominate but traffic and atmospheric stagnation induce severe episodic spikes.
 
 ### 5.2 Monthly Evolution Across the Development Period
 
@@ -128,11 +128,12 @@ The distribution follows an approximate log-normal shape typical of urban air po
 | **2004-12** | 561 | 2.58 | 2.30 | 1.65 |
 | **2005-01** (dev slice) | 325 | 2.45 | 2.20 | 1.25 |
 
-**Findings:**
-* **Summer minimum in August (mean 1.25 mg/m³):** Corresponds to the Italian summer vacation period (*Ferragosto*), characterized by sharply reduced vehicular traffic in Rome, combined with strong atmospheric convection and high planetary boundary layer heights.
-* **Winter maximum in October–November (mean 2.72 mg/m³, max std 1.93):** Driven by residential heating, increased commuter traffic, and frequent thermal inversions trapping pollutants near the roadside.
+**Descriptive Observations:**
+* August 2004 exhibits the lowest monthly mean (**1.25 mg/m³**, std 0.58).
+* October and November 2004 exhibit the highest monthly means (**2.72 mg/m³** and **2.69 mg/m³**, std up to 1.93).
+* *Note on potential causes:* Hypotheses regarding holiday activity reductions or meteorological dispersion conditions remain unverified, as external traffic and planetary boundary layer data are not present in this dataset.
 
-Visualized in: `reports/figures/eda/02_target_distribution_and_monthly.png`.
+Visualized in: `../reports/figures/eda/02_target_distribution_and_monthly.png`.
 
 ---
 
@@ -140,48 +141,62 @@ Visualized in: `reports/figures/eda/02_target_distribution_and_monthly.png`.
 
 ### 6.1 Calibration Baseline: `PT08.S1(CO)` vs `CO(GT)`
 
-* **Pearson Correlation coefficient ($r$):** **0.8931** ($R^2 \approx 0.798$)
+* **Sample Size ($N$):** 5,657 development eligible hours
+* **Pearson Correlation coefficient ($r$):** **0.8931**
 * **Spearman Rank Correlation ($\rho$):** **0.8999**
+* **Coefficient of Determination ($R^2$):** **0.7976**
 * **OLS Linear Calibration Fit:**
-  $$\widehat{\text{CO(GT)}} = 0.0053 \times \text{PT08.S1(CO)} - 3.70$$
+  $$\widehat{\text{CO(GT)}} = 0.00586 \times \text{PT08.S1(CO)} - 4.328$$
 
-**Modulation by Ambient Temperature:**
-The scatter plot reveals that for identical `PT08.S1(CO)` sensor response levels, higher ambient temperatures ($T > 25^\circ\text{C}$, summer) systematically shift reference `CO(GT)` downward relative to colder conditions ($T < 10^\circ\text{C}$, winter). Metal-oxide sensor conductivity depends fundamentally on surface oxygen ion sorption, which is strongly temperature- and moisture-dependent.
+**Temperature Residual Analysis:**
+Evaluating OLS prediction residuals ($e = y - \hat{y}$) across temperature bands reveals:
+* **Cold hours ($T < 10^\circ\text{C}$, $n = 581$):** Mean residual is **$+0.181\text{ mg/m}^3$** (observations sit modestly above the linear fit).
+* **Warm hours ($T > 25^\circ\text{C}$, $n = 1,527$):** Mean residual is **$-0.015\text{ mg/m}^3$** (observations sit very close to the linear fit).
 
-Visualized in: `reports/figures/eda/03_target_sensor_relationship_dev.png`.
+This asymmetry indicates that ambient temperature influences sensor response, supporting the hypothesis that temperature compensation may improve calibration accuracy.
 
-### 6.2 Temporal Stability (Rolling Correlation)
+Visualized in: `../reports/figures/eda/03_target_sensor_relationship_dev.png`.
 
-To test the stability of the relationship over time, 14-day (336h) and 30-day (720h) rolling Pearson correlations were computed over the development period:
+### 6.2 Temporal Stability (Rolling Correlation with Explicit Sample Thresholds)
 
-| Rolling Window | Mean | Median | Std Dev | Min | Max |
-|:---|:---:|:---:|:---:|:---:|:---:|
-| **14-day Window** | **0.915** | 0.925 | 0.035 | 0.398 | 1.000 |
-| **30-day Window** | **0.907** | 0.910 | 0.034 | 0.398 | 1.000 |
+To prevent small-sample artifacts at the beginning of the timeline, rolling Pearson correlations were computed with explicit minimum observation thresholds (`min_periods`):
+* **14-day Rolling Window:** `min_periods = 168` eligible hours (minimum 7 full days of observations).
+* **30-day Rolling Window:** `min_periods = 360` eligible hours (minimum 15 full days of observations).
+
+| Metric | 14-day Window (`min_periods=168`) | 30-day Window (`min_periods=360`) |
+|:---|:---:|:---:|
+| **Valid Windows ($N$)** | 4,936 | 5,217 |
+| **Mean $r$** | **0.914** | **0.905** |
+| **Median $r$** | 0.924 | 0.907 |
+| **Std Dev** | 0.033 | 0.033 |
+| **Minimum $r$** | **0.801** (2004-07-26, late July) | **0.800** (2004-08-11, mid-August) |
+| **Maximum $r$** | 0.973 | 0.951 |
+| **November 2004 Minimum $r$** | 0.855 | 0.900 |
 
 **Stability Observation:**
-* The sensor-target coupling is remarkably strong ($r > 0.88$) across Spring, Summer, and early Autumn.
-* A pronounced dip occurs in late Autumn (November 2004), where correlation briefly declines toward ~0.70 (and dips locally to ~0.40 on narrow windows). This drop coincides with the sharp onset of cold weather, heavy precipitation, and rapid atmospheric transitions.
+With small-sample noise filtered out, the correlation between `PT08.S1(CO)` and `CO(GT)` remains strong ($r \ge 0.80$) across the entire development period, with an overall mean above 0.90. The modest dip observed in mid-summer coincides with lower overall CO concentrations during that period.
 
-Visualized in: `reports/figures/eda/04_rolling_correlation_stability.png`.
+Visualized in: `../reports/figures/eda/04_rolling_correlation_stability.png`.
 
 ---
 
 ## 7. Descriptive Sensor Shifts: Early vs. Late Period
 
-We compared the distributions of all 5 low-cost sensors between:
-* **Early Development Period:** `2004-03-11` to `2004-05-11` (Spring 2004, 1,464 grid hours).
-* **Late Development Period:** `2004-11-15` to `2005-01-16` (Winter 2004–2005, 1,488 grid hours).
+We compared sensor and environmental distributions between two distinct windows:
+* **Early Development Window:** `2004-03-11` to `2004-05-11` (1,488 grid hours; 1,461 hours with all 5 sensors present).
+* **Late Development Window:** `2004-11-15` to `2005-01-16` (1,512 grid hours; 1,380 hours with all 5 sensors present).
 
-### 7.1 Measured Sensor Mean Shifts
+### 7.1 Measured Means and Percentage Shifts
 
-| Sensor Column | Target Gas | Early Mean | Late Mean | Absolute Δ | Percentage Shift |
+| Column | Role / Target Gas | Early Mean | Late Mean | Absolute Shift | Percentage Shift |
 |:---|:---|:---:|:---:|:---:|:---:|
-| `PT08.S1(CO)` | CO-targeted | 1,168.2 | 1,137.3 | -30.9 | **-2.64%** |
-| `PT08.S2(NMHC)` | NMHC-targeted | 943.1 | 962.3 | +19.2 | **+2.04%** |
-| `PT08.S3(NOx)` | NOx-targeted | 963.7 | 801.9 | -161.7 | **-16.78%** |
-| `PT08.S4(NO2)` | NO2-targeted | 1,606.4 | 1,266.2 | -340.2 | **-21.18%** |
-| `PT08.S5(O3)` | O3-targeted | 994.9 | 1,176.2 | +181.4 | **+18.23%** |
+| `PT08.S1(CO)` | CO-targeted sensor | 1,168.20 | 1,137.34 | -30.86 | **-2.64%** |
+| `PT08.S2(NMHC)` | NMHC-targeted sensor | 943.07 | 962.30 | +19.23 | **+2.04%** |
+| `PT08.S3(NOx)` | NOx-targeted sensor | 963.66 | 801.93 | -161.73 | **-16.78%** |
+| `PT08.S4(NO2)` | NO2-targeted sensor | 1,606.42 | 1,266.17 | -340.25 | **-21.18%** |
+| `PT08.S5(O3)` | O3-targeted sensor | 994.87 | 1,176.24 | +181.36 | **+18.23%** |
+| `T` | Temperature (°C) | 16.09 | 11.03 | -5.06 | **-31.45%** |
+| `AH` | Absolute Humidity | 0.902 | 0.788 | -0.114 | **-12.64%** |
 
 ### 7.2 Crucial Scientific Distinction: Drift vs. Seasonality
 
@@ -189,54 +204,56 @@ We compared the distributions of all 5 low-cost sensors between:
 > **Sensor drift cannot be claimed as proven.**  
 > Although `PT08.S3(NOx)` and `PT08.S4(NO2)` exhibit large downward shifts (-16.8% and -21.2%) while `PT08.S5(O3)` shifts upward (+18.2%), these temporal differences **cannot be attributed solely to sensor aging or drift**.
 >
-> 1. **Extreme Seasonal Confounding:** Ambient temperature dropped from a mean of $16.4^\circ\text{C}$ in the early period to $8.7^\circ\text{C}$ in the late period, and absolute humidity dropped from $0.84$ to $0.68$. Metal oxide resistance is known to vary nonlinearly with atmospheric temperature and moisture.
-> 2. **Atmospheric Chemistry:** Photochemical ozone ($O_3$) production and nitrogen oxide ($NO_x / NO_2$) equilibrium shift naturally between summer and winter.
+> 1. **Seasonal Confounding:** Ambient temperature dropped by $5.06^\circ\text{C}$ (from $16.09^\circ\text{C}$ to $11.03^\circ\text{C}$), and absolute humidity dropped from $0.902$ to $0.788$. Metal-oxide sensor conductivity depends nonlinearly on atmospheric temperature and moisture.
+> 2. **Atmospheric Chemistry:** Concentrations of ozone and nitrogen oxides naturally exhibit seasonal shifts.
 >
-> Downstream models must evaluate whether nonlinear environmental compensation resolves these shifts before invoking irreversible physical sensor drift.
+> Downstream models must evaluate whether environmental compensation accounts for these shifts before concluding that physical sensor drift has occurred.
 
-Visualized in: `reports/figures/eda/05_sensor_distribution_early_vs_late.png`.
+Visualized in: `../reports/figures/eda/05_sensor_distribution_early_vs_late.png`.
 
 ---
 
 ## 8. Environmental Patterns & Diurnal Cycles
 
-* **Seasonal Progression:** Temperature ranges from a maximum of $44.6^\circ\text{C}$ in summer to a minimum of $-1.9^\circ\text{C}$ in winter.
-* **Diurnal Traffic Bimodal Peaks:** Diurnal profiles of `CO(GT)` and low-cost sensor readings exhibit two stark roadside traffic rush peaks:
-  * **Morning Rush Hour:** 08:00 – 09:00 local time.
-  * **Evening Rush Hour:** 19:00 – 20:00 local time.
-  * **Night Minimum:** 03:00 – 05:00 local time.
+* **Seasonal Progression:** Temperature ranges from $-1.9^\circ\text{C}$ to $44.6^\circ\text{C}$, exhibiting large annual seasonality.
+* **Diurnal Rush Hour Peaks:** Reference `CO(GT)` concentration shows clear bimodal diurnal peaks:
+  * Morning rush period: 08:00 – 09:00.
+  * Evening rush period: 19:00 – 20:00.
+  * Nighttime minimum: 03:00 – 05:00.
 
-Visualized in: `reports/figures/eda/06_environmental_seasonal_patterns.png`.
+Visualized in: `../reports/figures/eda/06_environmental_seasonal_patterns.png`.
 
 ---
 
-## 9. Actionable Recommendations for Downstream Issues
+## 9. Recommendations and Ideas to Test for Downstream Issues
 
 ### 9.1 For Feature Engineering (Issue #3 — ZiyadAhmedAmmar)
-1. **Handling the 366-Hour Sensor Outages:**
-   Because low-cost input outages are all-or-nothing and last up to 76 hours, any autoregressive lag feature (e.g. $t-1, t-2$) or rolling window calculation across outage boundaries will propagate NaNs. Consider using causal zero-leakage forward fill or masking indicators inspired by SmartImpute methodology for lags $\le 3$ hours, but leave multi-day gaps uncomputed.
-2. **Sensor-Environment Interactions:**
-   Given the strong modulation of `PT08.S1(CO)` by temperature and humidity, create explicit interaction terms (e.g. $\text{PT08.S1} \times T$, $\text{PT08.S1} \times \text{AH}$).
-3. **Diurnal and Day-of-Week Features:**
-   Cyclical encoding ($\sin / \cos$) of the hour of the day (24h) and day of the week (7d) is strongly justified by the morning and evening traffic peaks and weekend traffic reductions.
+*Ideas to test (ownership remains with Issue #3):*
+1. **Handling Missing Outages per Contract:**
+   Per `docs/data_contract.md` §10 rule 2: *"A lag that falls inside a missing period must be NaN, not the last value seen."* Forward-filling is prohibited. An idea to explore is adding binary missingness indicator features (e.g. `is_recent_outage`) alongside valid lags.
+2. **Sensor-Temperature Interaction Features:**
+   Given that cold temperatures shift observations above the linear fit, testing multiplicative interaction features ($\text{PT08.S1} \times T$, $\text{PT08.S1} \times \text{AH}$) is recommended.
+3. **Cyclical Temporal Encodings:**
+   The bimodal diurnal rush-hour pattern suggests testing cyclical representations ($\sin / \cos$) of hour-of-day.
 
 ### 9.2 For Modeling & Validation (Issue #4 — Mohammed-Ahmed-Alansi)
-1. **Target Skewness:**
-   With skewness $= +1.36$, linear models may be disproportionately influenced by high-pollution tail events. The primary evaluation metric is **MAE**, which provides robustness against extreme outliers compared to RMSE.
-2. **Single vs Multi-Sensor Calibration:**
-   While `PT08.S1(CO)` alone achieves $r \approx 0.893$, the presence of other sensors (`PT08.S2` through `PT08.S5`) and environmental inputs will likely help isolate cross-gas sensitivity and temperature interference, which is the core thesis of Experiment C vs B.
-3. **Validation Windows:**
-   Follow the 3-fold expanding cross-validation protocol pinned in contract v1.1 (`dev_folds()`). Fold 0 (August–October 2004) will test summer-to-autumn transition, while Fold 2 (November 2004–January 2005) tests winter calibration stability.
+*Ideas to test (ownership remains with Issue #4):*
+1. **Target Distribution Considerations:**
+   The positive skewness (+1.36) and extreme peak observations (up to 11.9 mg/m³) mean squared-error losses may be sensitive to high-concentration events. Note that while **MAE** is the competition evaluation metric, loss functions (such as Huber loss or log-transforms) could be explored as modeling choices.
+2. **Multi-Sensor Cross-Compensation:**
+   Evaluating whether multi-sensor models (Experiment C) outperform single-sensor models (Experiment B) by learning cross-gas corrections.
+3. **Expanding-Window Protocol:**
+   Utilize the 3-fold expanding cross-validation protocol pinned in contract v1.1 (`dev_folds()`).
 
 ---
 
-## 10. Audit Artifacts & Figure Registry
+## 10. Audit Artifacts & Relative Figure Registry
 
-All generated figures conform to publication quality (300 DPI, styled palettes, explicit units) and are stored in `reports/figures/eda/`:
+All figures conform to publication standards (300 DPI) and are stored under relative paths from `docs/`:
 
-1. [`reports/figures/eda/01_missingness_timeline.png`](file:///c:/Users/OMRRAN/Desktop/Cource%20AI/%234-%20ML/Competitions/ml-course-final-air-quality-calibration/reports/figures/eda/01_missingness_timeline.png) — Binary missingness matrix across all 13 columns, annotating 173h target and 76h sensor outages and `TEST_START`.
-2. [`reports/figures/eda/02_target_distribution_and_monthly.png`](file:///c:/Users/OMRRAN/Desktop/Cource%20AI/%234-%20ML/Competitions/ml-course-final-air-quality-calibration/reports/figures/eda/02_target_distribution_and_monthly.png) — Distribution density/KDE of `CO(GT)` and monthly boxplots in development period.
-3. [`reports/figures/eda/03_target_sensor_relationship_dev.png`](file:///c:/Users/OMRRAN/Desktop/Cource%20AI/%234-%20ML/Competitions/ml-course-final-air-quality-calibration/reports/figures/eda/03_target_sensor_relationship_dev.png) — Scatter plot with linear fit and temperature-color gradient on development partition.
-4. [`reports/figures/eda/04_rolling_correlation_stability.png`](file:///c:/Users/OMRRAN/Desktop/Cource%20AI/%234-%20ML/Competitions/ml-course-final-air-quality-calibration/reports/figures/eda/04_rolling_correlation_stability.png) — 14-day and 30-day rolling Pearson correlation between `PT08.S1(CO)` and `CO(GT)`.
-5. [`reports/figures/eda/05_sensor_distribution_early_vs_late.png`](file:///c:/Users/OMRRAN/Desktop/Cource%20AI/%234-%20ML/Competitions/ml-course-final-air-quality-calibration/reports/figures/eda/05_sensor_distribution_early_vs_late.png) — Comparative distribution curves for all 5 low-cost sensors (Spring 2004 vs Winter 2004–2005).
-6. [`reports/figures/eda/06_environmental_seasonal_patterns.png`](file:///c:/Users/OMRRAN/Desktop/Cource%20AI/%234-%20ML/Competitions/ml-course-final-air-quality-calibration/reports/figures/eda/06_environmental_seasonal_patterns.png) — Seasonal evolution of temperature/humidity and diurnal rush-hour profiles.
+1. [Figure 1: Missingness Timeline](../reports/figures/eda/01_missingness_timeline.png) — Binary missingness matrix across all 13 columns annotating outage blocks and `TEST_START`.
+2. [Figure 2: Target Distribution & Monthly Boxplots](../reports/figures/eda/02_target_distribution_and_monthly.png) — `CO(GT)` distribution (KDE) and monthly boxplots in the development period.
+3. [Figure 3: Sensor-Target Relationship & Temperature Modulation](../reports/figures/eda/03_target_sensor_relationship_dev.png) — Scatter plot with OLS linear fit ($r = 0.8931$) and temperature gradient.
+4. [Figure 4: Rolling Correlation Stability](../reports/figures/eda/04_rolling_correlation_stability.png) — 14-day and 30-day rolling Pearson correlation with `min_periods` thresholds (168h and 360h).
+5. [Figure 5: Descriptive Sensor Distributions (Early vs. Late)](../reports/figures/eda/05_sensor_distribution_early_vs_late.png) — Comparative distribution curves for all 5 low-cost sensors (Spring '04 vs Winter '04-'05).
+6. [Figure 6: Environmental Trends & Diurnal Cycles](../reports/figures/eda/06_environmental_seasonal_patterns.png) — Seasonal temperature/humidity trends and diurnal roadside profiles.
