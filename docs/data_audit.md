@@ -63,11 +63,11 @@ The missingness profile across the dataset was audited thoroughly:
 2. **Clustered Reference Target Gaps:**
    * The reference analyzer `CO(GT)` suffers **1,683 missing hours** distributed across **187 separate outage episodes**.
    * The longest continuous target outages are:
-     * **174 hours:** 2004-10-13 10:00 → 2004-10-20 15:00.
-     * **147 hours:** 2004-04-17 02:00 → 2004-04-23 04:00 (April 2004).
-     * **143 hours:** 2004-10-01 17:00 → 2004-10-07 15:00 (October 2004).
-     * **123 hours:** 2004-07-26 02:00 → 2004-07-31 04:00 (late July 2004).
-     * **97 hours:** 2004-12-28 00:00 → 2005-01-01 00:00 (late December 2004).
+     * **173 hours:** 2004-10-13 11:00 → 2004-10-20 15:00 (October 2004).
+     * **146 hours:** 2004-04-17 03:00 → 2004-04-23 04:00 (April 2004).
+     * **142 hours:** 2004-10-01 18:00 → 2004-10-07 15:00 (October 2004).
+     * **122 hours:** 2004-07-26 03:00 → 2004-07-31 04:00 (late July 2004).
+     * **96 hours:** 2004-12-28 01:00 → 2005-01-01 00:00 (late December 2004).
 3. **Monthly Target Availability Variation:**
    * The proportion of valid `CO(GT)` hours ranges widely: October 2004 (52.8%) and August 2004 (64.1%) have high missingness, while February–April 2005 reaches 97–99% completeness.
 4. **Cross-Availability Breakdown:**
