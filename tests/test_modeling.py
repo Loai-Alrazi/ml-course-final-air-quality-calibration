@@ -1,7 +1,7 @@
 """Tests for modeling pipelines, cross-validation runner, and final-test isolation.
 
 Implements acceptance criteria for Issue #8 (part of #4):
-1. Imputer and scaler fitted on training-fold rows only.
+1. Imputer and scaler fitted on training-fold rows only (exercised through the runner).
 2. Final-test values do not affect design matrix or CV predictions; all CV timestamps < TEST_START.
 3. Equivalent evaluation sets: identical validation timestamps across all experiments per fold.
 4. Final-test path refuses without authorization and works on synthetic data.
@@ -13,7 +13,8 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-from sklearn.base import clone
+from sklearn.base import BaseEstimator, TransformerMixin, clone
+from sklearn.pipeline import Pipeline
 
 from air_quality.data import (
     DEFAULT_RAW_DIR,
@@ -27,6 +28,7 @@ from air_quality.data import (
 from air_quality.features import (
     FEATURE_GROUPS,
 )
+import air_quality.modeling as modeling
 from air_quality.modeling import (
     HGB_SETTINGS,
     PREDICTION_COLUMNS,
@@ -49,10 +51,7 @@ from air_quality.split import (
 
 @pytest.fixture
 def synthetic_full_grid() -> pd.DataFrame:
-    """Create a synthetic hourly grid spanning across development and final test periods.
-
-    Dates: 2004-03-10 to 2005-03-01 (encompassing TEST_START at 2005-02-05).
-    """
+    """Create a synthetic hourly grid spanning across development and final test periods (encompassing TEST_START)."""
     start = pd.Timestamp("2004-03-10 18:00:00")
     end = pd.Timestamp("2005-02-28 23:00:00")
     index = pd.date_range(start, end, freq="h", name="timestamp")
@@ -116,8 +115,42 @@ def test_feature_set_formatting_and_d_groups_parsing():
         parse_d_groups("time,invalid_group")
 
 
+class FitRecorder(BaseEstimator, TransformerMixin):
+    calls: list[pd.DatetimeIndex] = []
+
+    def fit(self, X, y=None):
+        FitRecorder.calls.append(pd.DatetimeIndex(X.index))
+        return self
+
+    def transform(self, X):
+        return X
+
+
+def test_runner_fits_on_training_rows_only(synthetic_full_grid, monkeypatch):
+    """Acceptance criterion 1: verify that the runner passes training rows only to fit.
+
+    Prepends a recording step to every pipeline the runner builds, runs all experiments,
+    and asserts that every fitted index precedes validation start and never overlaps validation rows.
+    """
+    orig = modeling.make_pipeline
+    monkeypatch.setattr(
+        modeling,
+        "make_pipeline",
+        lambda t: Pipeline([("record", FitRecorder()), *orig(t).steps]),
+    )
+    FitRecorder.calls.clear()
+    preds = modeling.run_all_experiments(synthetic_full_grid, d_groups=list(FEATURE_GROUPS))
+    folds = dev_folds()
+    assert len(FitRecorder.calls) == preds["experiment"].nunique() * len(folds)
+    for i, fitted in enumerate(FitRecorder.calls):
+        k = i % len(folds)
+        val = preds.loc[preds["fold"] == str(k), "timestamp"]
+        assert fitted.max() < folds[k].val_start
+        assert not fitted.isin(val).any()
+
+
 def test_fold_local_imputer_and_scaler(synthetic_full_grid):
-    """Acceptance criterion 1: imputers and scalers are fitted on training rows only.
+    """Acceptance criterion 1 (unit level): imputers and scalers are fitted on training rows only.
 
     Perturbing validation-fold rows leaves the fitted imputer and scaler statistics unchanged.
     """
@@ -158,6 +191,7 @@ def test_fold_local_imputer_and_scaler(synthetic_full_grid):
 def test_final_test_isolation_and_no_cv_timestamp_exceeds_test_start(synthetic_full_grid):
     """Acceptance criterion 2: altering final-test data leaves design matrix and CV unchanged.
 
+    Covers lags, rolling, and all 10 experiments across clean and perturbed grids.
     Also asserts that no CV timestamp is >= TEST_START.
     """
     df_clean = synthetic_full_grid
@@ -173,16 +207,16 @@ def test_final_test_isolation_and_no_cv_timestamp_exceeds_test_start(synthetic_f
     for col in FORBIDDEN_COLS:
         df_perturbed.loc[test_rows, col] = 888888.0
 
-    # 1. Design matrix must be identical
-    X_clean, y_clean = build_design_matrix(df_clean, groups="time")
-    X_pert, y_pert = build_design_matrix(df_perturbed, groups="time")
+    # 1. Design matrix must be identical across all feature groups (including lags and rolling)
+    X_clean, y_clean = build_design_matrix(df_clean, groups="all")
+    X_pert, y_pert = build_design_matrix(df_perturbed, groups="all")
 
     pd.testing.assert_frame_equal(X_clean, X_pert)
     pd.testing.assert_series_equal(y_clean, y_pert)
 
-    # 2. CV predictions must be identical
-    preds_clean = run_cv_experiment(df_clean, "B")
-    preds_pert = run_cv_experiment(df_perturbed, "B")
+    # 2. CV predictions must be identical across all 10 experiments
+    preds_clean = run_all_experiments(df_clean, d_groups=list(FEATURE_GROUPS))
+    preds_pert = run_all_experiments(df_perturbed, d_groups=list(FEATURE_GROUPS))
 
     pd.testing.assert_frame_equal(preds_clean, preds_pert)
 

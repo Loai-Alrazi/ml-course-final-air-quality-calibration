@@ -26,6 +26,7 @@ from sklearn.preprocessing import StandardScaler
 
 from air_quality.data import (
     INPUT_COLS,
+    PROJECT_ROOT,
     SENSOR_COLS,
     TARGET,
     eligible_mask,
@@ -43,7 +44,7 @@ from air_quality.split import (
 )
 
 # Output directory and default filename
-DEFAULT_OUTPUT_DIR = Path("outputs")
+DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "outputs"
 DEFAULT_OUTPUT_FILE = DEFAULT_OUTPUT_DIR / "cv_predictions.csv"
 
 # Fixed model settings (no search)
