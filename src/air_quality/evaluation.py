@@ -43,9 +43,12 @@ PREDICTION_COLS = ["experiment", "model", "feature_set", "fold", "timestamp", "y
 CANDIDATES = tuple(f"C+{g}" for g in FEATURE_GROUPS)
 EXPERIMENTS = ("A", "B", "C", *CANDIDATES, "D", "E")
 EXPECTED_MODEL = {"A": "dummy_median", "E": "hgb", **{e: "ridge" for e in ("B", "C", *CANDIDATES, "D")}}
-# Feature sets fixed by the experiment design. A uses no features, and D/E
-# depend on the ablation outcome, so they are checked in select_final().
+# Feature sets fixed by the experiment design. A is fitted on B's design
+# matrix and ignores its values, so it is labelled S1. D/E depend on the
+# ablation outcome and are checked in select_final(); with no group retained
+# their feature_set is "inputs". Labels are compared as sets of "+"-parts.
 EXPECTED_FEATURES = {
+    "A": {"S1"},
     "B": {"S1"},
     "C": {"inputs"},
     **{f"C+{g}": {"inputs", g} for g in FEATURE_GROUPS},
@@ -233,6 +236,7 @@ class Comparison(NamedTuple):
     reference: str
     candidate_mae: float          # mean CV MAE
     reference_mae: float
+    folds: tuple[str, ...]
     candidate_fold_mae: tuple[float, ...]
     reference_fold_mae: tuple[float, ...]
     folds_improved: int
@@ -255,23 +259,52 @@ def compare(preds: pd.DataFrame, candidate: str, reference: str) -> Comparison:
     improved = int((cand < ref).sum())
     passes = bool(cand.mean() < ref.mean() and improved >= MIN_FOLDS_IMPROVED)
     return Comparison(
-        candidate, reference, float(cand.mean()), float(ref.mean()),
-        tuple(cand.round(6)), tuple(ref.round(6)), improved, passes,
+        candidate, reference, float(cand.mean()), float(ref.mean()), tuple(mae.index),
+        tuple(cand.astype(float)), tuple(ref.astype(float)), improved, passes,
     )
 
 
-def ablation_table(preds: pd.DataFrame) -> pd.DataFrame:
+def comparison_table(comparisons: Sequence[Comparison]) -> pd.DataFrame:
+    """One row per comparison: the means, folds improved and the decision."""
+    return pd.DataFrame([{
+        "candidate": c.candidate,
+        "reference": c.reference,
+        "mae_mean_candidate": c.candidate_mae,
+        "mae_mean_reference": c.reference_mae,
+        "folds_improved": f"{c.folds_improved}/{len(c.folds)}",
+        "passes": c.passes,
+    } for c in comparisons])
+
+
+def comparison_folds(comparisons: Sequence[Comparison]) -> pd.DataFrame:
+    """Per-fold MAE of candidate and reference for each comparison, for auditing decisions."""
+    return pd.DataFrame([{
+        "candidate": c.candidate,
+        "reference": c.reference,
+        "fold": fold,
+        "mae_candidate": cand,
+        "mae_reference": ref,
+        "improved": cand < ref,
+    } for c in comparisons
+        for fold, cand, ref in zip(c.folds, c.candidate_fold_mae, c.reference_fold_mae)])
+
+
+def ablation_comparisons(preds: pd.DataFrame) -> list[Comparison]:
     """Each feature group added alone to C, compared with C (Issue #9, step 1)."""
+    return [compare(preds, f"C+{group}", "C") for group in FEATURE_GROUPS]
+
+
+def ablation_table(preds: pd.DataFrame) -> pd.DataFrame:
+    """Summary of :func:`ablation_comparisons`, one row per feature group."""
     rows = []
-    for group in FEATURE_GROUPS:
-        c = compare(preds, f"C+{group}", "C")
+    for group, c in zip(FEATURE_GROUPS, ablation_comparisons(preds)):
         rows.append({
             "group": group,
             "experiment": c.candidate,
             "mae_mean": c.candidate_mae,
             "mae_mean_C": c.reference_mae,
             "delta_mae": c.candidate_mae - c.reference_mae,
-            "folds_improved": f"{c.folds_improved}/{len(c.candidate_fold_mae)}",
+            "folds_improved": f"{c.folds_improved}/{len(c.folds)}",
             "retained": c.passes,
         })
     return pd.DataFrame(rows)
@@ -286,6 +319,24 @@ def retained_groups(preds: pd.DataFrame) -> list[str]:
 def d_feature_set(groups: Sequence[str]) -> str:
     """Feature-set label of D and E for the given retained groups."""
     return "+".join(["inputs", *groups])
+
+
+def stage2_command(groups: Sequence[str]) -> str:
+    """Runner command for D and E (Issue #8 interface).
+
+    With no retained group the runner takes ``--d-groups none``; it also
+    accepts an empty string, but some shells drop empty arguments.
+    """
+    return f"python -m air_quality.modeling --d-groups {','.join(groups) if groups else 'none'}"
+
+
+def final_statement(final: str) -> str:
+    """Plain-language outcome of :func:`select_final` for the report."""
+    if final == "A":
+        return ("No experiment beat baseline A (median of the training target) under the "
+                "pre-registered rule. The final candidate is **A**: on development evidence, "
+                "no calibration model is justified.")
+    return f"Final candidate (development evidence only): **{final}**"
 
 
 def select_final(preds: pd.DataFrame) -> tuple[str, list[Comparison]]:
@@ -535,22 +586,29 @@ def run(preds: pd.DataFrame, df: pd.DataFrame | None, figures_dir: Path = FIGURE
     """
     preds = validate_predictions(preds)   # development CV rows only
     present = set(preds["experiment"])
-    parts = ["## CV summary (primary 3-fold protocol, contract v1.1)",
-             to_markdown(cv_summary(preds), index=True)]
+    parts = ["All experiments in the predictions file are reported, including those that do "
+             "not improve on their reference.",
+             "## CV summary (primary 3-fold protocol, contract v1.1)",
+             to_markdown(cv_summary(preds), index=True),
+             "## Per-fold metrics",
+             to_markdown(fold_metrics(preds))]
 
     if {"C", *CANDIDATES} <= present:
         groups = retained_groups(preds)
+        retained = (f"Retained groups: {', '.join(groups)}" if groups else
+                    "No feature group retained: D uses C's inputs only (feature_set `inputs`), "
+                    "and E uses the same features.")
         parts += ["## Feature-group ablation (each group vs C)", to_markdown(ablation_table(preds)),
-                  f"Retained groups: {', '.join(groups) if groups else 'none'}",
-                  f"Stage 2 command: `python -m air_quality.modeling --d-groups {','.join(groups)}`"]
+                  to_markdown(comparison_folds(ablation_comparisons(preds))),
+                  retained, f"Stage 2 command: `{stage2_command(groups)}`"]
     if not ({*SELECTION_ORDER, *CANDIDATES} <= present):
         parts.append("D and/or E are not present yet: final selection and error analysis skipped.")
         return "\n\n".join(parts)
 
     final, steps = select_final(preds)
     parts += ["## Final-candidate procedure (A → B → C → D → E)",
-              to_markdown(pd.DataFrame(steps).drop(columns=["candidate_fold_mae", "reference_fold_mae"])),
-              f"Final candidate (development evidence only): **{final}**"]
+              to_markdown(comparison_table(steps)), to_markdown(comparison_folds(steps)),
+              final_statement(final)]
     figures_dir = Path(figures_dir)
     figures_dir.mkdir(parents=True, exist_ok=True)
     plot_cv_mae(preds, figures_dir / "01_cv_mae_by_experiment.png")

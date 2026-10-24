@@ -19,7 +19,7 @@ from air_quality.features import FEATURE_GROUPS
 from air_quality.split import DATA_START, TEST_START, dev_folds
 
 N_PER_FOLD = 6
-FEATURES = {"A": "none", "B": "S1", "C": "inputs", **{f"C+{g}": f"inputs+{g}" for g in FEATURE_GROUPS}}
+FEATURES = {"A": "S1", "B": "S1", "C": "inputs", **{f"C+{g}": f"inputs+{g}" for g in FEATURE_GROUPS}}
 
 
 def make_preds(fold_errors: dict[str, list[float]], d_groups=()) -> pd.DataFrame:
@@ -134,6 +134,9 @@ def test_rejects_wrong_or_changing_design(valid):
         ev.validate_predictions(bad)
     with pytest.raises(ValueError, match="feature_set"):
         ev.validate_predictions(valid.replace({"feature_set": {"inputs+lags": "inputs+time"}}))
+    a_rows = valid["experiment"] == "A"
+    with pytest.raises(ValueError, match="experiment A has feature_set 'none'"):
+        ev.validate_predictions(valid.assign(feature_set=valid["feature_set"].where(~a_rows, "none")))
 
 
 def test_final_test_rows_rejected_by_default(valid):
@@ -263,10 +266,19 @@ def test_condition_labels_use_development_rows_only():
 
 def test_condition_thresholds_follow_eligible_development_rows():
     df = grid_frame()
+    dev_hours = df.index[df.index < TEST_START]
+    # 20% of development hours have a (very high) target but no current input:
+    # they are not eligible and must not move the thresholds.
+    no_inputs = dev_hours[::5]
+    df.loc[no_inputs, INPUT_COLS] = np.nan
+    df.loc[no_inputs, TARGET] = 50.0
     labels, thr = ev.condition_labels(df)
-    dev = df[df.index < TEST_START]
-    assert thr["high_co"] == pytest.approx(dev[TARGET].quantile(0.9))
-    assert labels["co_level"].str.startswith("CO >=").mean() == pytest.approx(0.1, abs=0.01)
+    dev = df.loc[dev_hours]
+    eligible = dev.drop(index=no_inputs)
+    assert thr["high_co"] == pytest.approx(eligible[TARGET].quantile(0.9))
+    assert thr["high_co"] < 8 < dev[TARGET].quantile(0.9)      # all-dev quantile would be 50
+    assert thr["T_low"] == pytest.approx(eligible["T"].quantile(1 / 3))
+    assert labels.loc[eligible.index, "co_level"].str.startswith("CO >=").mean() == pytest.approx(0.1, abs=0.01)
     assert labels["T_tertile"].nunique() == 3
 
 
@@ -303,8 +315,60 @@ def test_error_by_condition_and_over_time(valid):
 
 def test_run_stage1_reports_ablation_and_skips_selection(valid, tmp_path):
     text = ev.run(valid, None, tmp_path)
-    assert "Stage 2 command" in text and "skipped" in text
+    assert "skipped" in text
     assert not list(tmp_path.glob("*.png"))
+
+
+def test_run_reports_every_experiment_with_per_fold_metrics(valid):
+    text = ev.run(valid, None)
+    assert "including those that do not improve" in text
+    per_fold = text.split("## Per-fold metrics")[1].split("##")[0]
+    assert "| experiment | model | feature_set | fold | n | mae | rmse | r2 |" in per_fold
+    rows = [line.split(" | ") for line in per_fold.splitlines() if line.startswith("| ")][1:]
+    expected = {(exp, fold) for exp in ("A", "B", "C", *ev.CANDIDATES) for fold in ev.CV_FOLDS}
+    assert {(r[0].lstrip("| "), r[3]) for r in rows} == expected   # non-improving ones included
+    assert len(rows) == len(expected)
+
+
+def test_no_retained_group_is_explicit_and_stage2_command_is_runnable(valid):
+    text = ev.run(valid, None)                            # every candidate is worse than C
+    assert "No feature group retained" in text
+    assert "`python -m air_quality.modeling --d-groups none`" in text
+    assert ev.stage2_command([]) == "python -m air_quality.modeling --d-groups none"
+    assert ev.stage2_command(["time", "lags"]) == "python -m air_quality.modeling --d-groups time,lags"
+    retained = ev.run(make_preds(stage1(lags=(0.8, 0.9, 0.95))), None)
+    assert "Retained groups: lags" in retained and "--d-groups lags`" in retained
+
+
+def test_d_and_e_without_retained_groups_use_inputs_only():
+    errors = stage1()
+    errors.update(D=[1.0] * 3, E=[0.5] * 3)
+    preds = ev.validate_predictions(make_preds(errors, d_groups=()))
+    assert set(preds.loc[preds["experiment"].isin(["D", "E"]), "feature_set"]) == {"inputs"}
+    assert ev.select_final(preds)[0] == "E"
+
+
+def test_comparison_details_are_kept_per_fold(tmp_path):
+    final, steps = ev.select_final(full((0.8, 0.9, 0.95), (0.5, 1.0, 1.0)))
+    folds = ev.comparison_folds(steps)
+    assert len(folds) == 4 * 3
+    e_vs_d = folds[(folds["candidate"] == "E") & (folds["reference"] == "D")]
+    assert e_vs_d["fold"].tolist() == ["0", "1", "2"]
+    assert e_vs_d["mae_candidate"].tolist() == pytest.approx([0.5, 1.0, 1.0])
+    assert e_vs_d["mae_reference"].tolist() == pytest.approx([0.8, 0.9, 0.95])
+    assert e_vs_d["improved"].tolist() == [True, False, False]
+    summary = ev.comparison_table(steps).set_index("candidate")
+    assert summary.loc["E", "folds_improved"] == "1/3" and not summary.loc["E", "passes"]
+    text = ev.run(full((0.8, 0.9, 0.95), (0.5, 1.0, 1.0)), None, tmp_path)
+    assert "| E | D | 0 | 0.500 | 0.800 | True |" in text
+
+
+def test_report_states_when_nothing_beats_baseline_a(tmp_path):
+    errors = {exp: [1.0] * 3 for exp in ev.EXPERIMENTS}
+    errors["A"] = [0.5] * 3
+    text = ev.run(make_preds(errors, d_groups=()), None, tmp_path)
+    assert "No experiment beat baseline A" in text
+    assert "Final candidate (development evidence only)" not in text
 
 
 def test_run_full_writes_three_figures(tmp_path):

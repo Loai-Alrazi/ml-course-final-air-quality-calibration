@@ -20,7 +20,7 @@ This file is committed before any real number exists, so that the selection proc
 
 | Experiment | Model | Features |
 |---|---|---|
-| A | `DummyRegressor(strategy="median")` | none |
+| A | `DummyRegressor(strategy="median")` | none used (fitted on B's matrix, so `feature_set = S1`) |
 | B | Ridge | `PT08.S1(CO)` |
 | C | Ridge | the five sensors + `T`, `RH`, `AH` |
 | `C+<group>` | Ridge | C + one group from #3 (`time`, `lags`, `rolling`, `env_interaction`, `missing_ind`) |
@@ -35,9 +35,11 @@ Fixed model settings are recorded by #8 before the first run.
 
 **Procedure (Issue #9), implemented in `evaluation.py`:**
 
-1. **Ablation.** Each group is tested alone against C (`C+<group>` vs `C`). D = C plus every group that passes. If no group passes, D equals C, reported as "no group retained". `select_final` checks that D and E were run with exactly these groups.
+1. **Ablation.** Each group is tested alone against C (`C+<group>` vs `C`). D = C plus every group that passes. If no group passes, the report says "no group retained", and D and E are run with C's inputs only (`--d-groups none`, `feature_set = inputs`). `select_final` checks that D and E were run with exactly the retained groups.
 2. **E** uses D's feature set.
-3. **Final candidate.** The experiments are walked in order of complexity, A → B → C → D → E. A is the baseline reference. Each later experiment replaces the current choice only if it passes the rule against that choice. If nothing beats A, this report says so.
+3. **Final candidate.** The experiments are walked in order of complexity, A → B → C → D → E. A is the baseline reference. Each later experiment replaces the current choice only if it passes the rule against that choice. If nothing beats A, this report states explicitly that no calibration model is justified on development evidence.
+
+Every comparison is reported with its per-fold MAE for the candidate and the reference, so each acceptance or rejection can be checked.
 
 The procedure yields the development-period candidate. The Project Lead freezes it before the final test.
 
@@ -59,13 +61,15 @@ Changes over time are described, not interpreted as sensor drift: season and dri
 ```bash
 python -m air_quality.modeling                          # stage 1 (#8): A, B, C and the five candidates
 python -m air_quality.evaluation                        # ablation table and retained groups
-python -m air_quality.modeling --d-groups <retained>    # stage 2 (#8): D and E
+python -m air_quality.modeling --d-groups <retained>    # stage 2 (#8): D and E; `none` if no group is retained
 python -m air_quality.evaluation --out outputs/evaluation_tables.md   # tables + figures in reports/figures/modeling/
 ```
 
-The predictions file (`outputs/cv_predictions.csv`) is git-ignored. The commit and SHA-256 of the file used for this report will be recorded here.
+The predictions file (`outputs/cv_predictions.csv`) must not be committed: it contains raw `CO(GT)` values (`y_true`). The `outputs/` ignore rule is added to `.gitignore` by #8; until #8 is merged, `outputs/` is not ignored on `main`. The commit and SHA-256 of the file used for this report will be recorded here.
 
 ## 6. Results (pending #8 predictions)
+
+Every experiment that is run is reported, including those that do not improve on their reference. Nothing is removed after the results are seen. Metrics are shown per fold (MAE, RMSE, R²) and as the mean ± std across folds.
 
 ### 6.1 A–E summary
 
