@@ -4,6 +4,7 @@
 **Issue:** #3 — Feature Engineering & Leakage Tests  
 **Author:** Emran Yaseen Al-Sabry (`EmranYaseen-ALSabry`)  
 **Status:** Complete  
+*Note on Predictive Value:* No group's predictive value is established yet; inclusion is decided by the #4 ablation (`PROJECT_SPEC.md` §8). "Complete" refers strictly to the implementation, interface stability, and causal verification.  
 **Date:** 2026-10-24  
 **Data Contract Version:** v1.1 (`docs/data_contract.md`)  
 
@@ -96,6 +97,24 @@ A total of **30 engineered features** are provided across 5 modular groups:
 | `inputs_missing_lag_1h` | `missing_ind` | `inputs_available` | 1 h | Binary flag indicating if low-cost inputs were unobserved at $t-1\text{ h}$. |
 | `inputs_missing_lag_24h` | `missing_ind` | `inputs_available` | 24 h | Binary flag indicating if low-cost inputs were unobserved at $t-24\text{ h}$. |
 
+### 3.1 Group-Level Leakage Assessment & Caveat Notes
+
+1. **`time` Group:**
+   * **Leakage Assessment:** Uses only the `timestamp` index; zero leakage risk.
+2. **`lags` Group:**
+   * **Leakage Assessment:** Uses only past device readings from the hourly grid. A lag that falls inside an outage produces `NaN`. Gaps in the time grid are never bridged.
+3. **`rolling` Group:**
+   * **Leakage Assessment:** Uses past readings only because `shift(1)` is applied strictly before the rolling window.
+   * **Caveat for Downstream Modeling (#4):** Because `min_periods=1`, the rolling mean is built from whatever valid readings exist within the window. Just after an unobserved outage, the rolling mean can rest on very few hours. On the development grid:
+     * 93 eligible rows get a 24h mean from fewer than 12 readings, and 7 from a single reading;
+     * For the 6h mean, 12 eligible rows use a single reading.
+     This is not leakage, and no artificial threshold is required; it is noted so that Issue #4 can interpret feature variance appropriately.
+4. **`env_interaction` Group:**
+   * **Leakage Assessment:** Uses only readings available at the current prediction hour $t$.
+5. **`missing_ind` Group:**
+   * **Definition & Function:** Captures recent outage history ("the low-cost device had no inputs at $t-1\text{ h}$ / $t-24\text{ h}$").
+   * **Leakage Assessment:** On this dataset, low-cost sensor outages occur all-or-nothing (8,991 hours have every input and 366 have none). A current-hour indicator would always be 0 on eligible rows (which require current inputs to be present); thus lagged indicators are the only informative formulation. In the development period, `inputs_missing_lag_1h == 1` occurs on exactly 14 eligible rows, and `inputs_missing_lag_24h == 1` on 171 eligible rows.
+
 ---
 
 ## 4. Leakage Assessment & Verification Suite
@@ -114,7 +133,7 @@ All features were systematically subjected to automated validation tests in `tes
 
 ### 4.3 Target and Deployment Leakage Immunity
 * **Test:** `test_no_target_or_deployment_leakage`
-* **Mechanism:** Injected random noise into `CO(GT)` and all four reference gases (`NMHC(GT)`, `C6H6(GT)`, `NOx(GT)`, `NO2(GT)`).
+* **Mechanism:** Replaced `CO(GT)` and all `FORBIDDEN_COLS` (`NMHC(GT)`, `C6H6(GT)`, `NOx(GT)`, `NO2(GT)`) with constant values (999.99 and 888.88).
 * **Result:** Feature outputs were completely unchanged. Features depend purely on permissible device inputs.
 
 ### 4.4 Hourly Grid Gap Integrity (No Silent Bridging)

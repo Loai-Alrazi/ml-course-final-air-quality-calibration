@@ -14,14 +14,7 @@ from typing import Sequence
 import numpy as np
 import pandas as pd
 
-from air_quality.data import (
-    ENV_COLS,
-    FORBIDDEN_COLS,
-    INPUT_COLS,
-    SENSOR_COLS,
-    TARGET,
-    inputs_available,
-)
+from air_quality.data import SENSOR_COLS, inputs_available
 
 # Supported feature groups
 FEATURE_GROUPS = ("time", "lags", "rolling", "env_interaction", "missing_ind")

@@ -14,27 +14,22 @@ import pandas as pd
 import pytest
 
 from air_quality.data import (
-    ENV_COLS,
     FORBIDDEN_COLS,
     INPUT_COLS,
-    NUMERIC_COLS,
     SENSOR_COLS,
     TARGET,
 )
 from air_quality.features import (
-    ALL_GROUPS,
-    FEATURE_GROUPS,
     LONGEST_LOOKBACK_HOURS,
-    REQUIRED_GROUPS,
     build_features,
 )
 
 
 @pytest.fixture
 def synthetic_hourly_grid() -> pd.DataFrame:
-    """Create a synthetic 100-hour complete hourly grid with random sensor data."""
+    """Create a synthetic 120-hour complete hourly grid with simulated outage blocks."""
     start = pd.Timestamp("2004-04-01 00:00:00")
-    index = pd.date_range(start, periods=100, freq="h", name="timestamp")
+    index = pd.date_range(start, periods=120, freq="h", name="timestamp")
     rng = np.random.default_rng(42)
 
     data = {col: rng.normal(1000.0, 100.0, size=len(index)) for col in SENSOR_COLS}
@@ -46,7 +41,14 @@ def synthetic_hourly_grid() -> pd.DataFrame:
     for col in FORBIDDEN_COLS:
         data[col] = rng.uniform(10.0, 50.0, size=len(index))
 
-    return pd.DataFrame(data, index=index)
+    df = pd.DataFrame(data, index=index)
+    # Simulate realistic sensor outage blocks (NaNs in all input columns)
+    # Block 1: hours 15 to 22 (8 hours)
+    df.iloc[15:23, df.columns.isin(INPUT_COLS)] = np.nan
+    # Block 2: hours 70 to 85 (16 hours)
+    df.iloc[70:86, df.columns.isin(INPUT_COLS)] = np.nan
+
+    return df
 
 
 def test_build_features_returns_expected_structure(synthetic_hourly_grid):
@@ -84,19 +86,36 @@ def test_group_selection_and_validation(synthetic_hourly_grid):
         build_features(df, groups=["time", "invalid_group"])
 
 
-def test_no_temporal_leakage_future_to_past(synthetic_hourly_grid):
-    """acceptance criterion 1: modifying inputs at t + k (k >= 1) must NEVER change features at t."""
+@pytest.mark.parametrize(
+    "t_idx",
+    [3, 18, 23, 24, 50, 75, 86, 115],
+)
+@pytest.mark.parametrize("perturbation_type", ["extreme", "nan"])
+def test_no_temporal_leakage_future_to_past(synthetic_hourly_grid, t_idx, perturbation_type):
+    """acceptance criterion 1: modifying inputs at t + k (k >= 1) must NEVER change features at t.
+
+    Tests across multiple time regimes:
+    - Early boundary (t=3)
+    - Inside outage block 1 (t=18, 23)
+    - Immediately after outage block 1 (t=24)
+    - Normal contiguous operation (t=50)
+    - Inside longer outage block 2 (t=75)
+    - Immediately after outage block 2 (t=86)
+    - Late boundary near horizon (t=115)
+    With both extreme numerical perturbations and NaN injections in future slices.
+    """
     df_clean = synthetic_hourly_grid
     df_perturbed = df_clean.copy()
-
-    # Select evaluation point at t = index[50]
-    t_idx = 50
     t_time = df_clean.index[t_idx]
 
-    # Perturb all inputs aggressively from t + 1 onwards
-    rng = np.random.default_rng(999)
-    for col in INPUT_COLS:
-        df_perturbed.iloc[t_idx + 1 :, df_perturbed.columns.get_loc(col)] = rng.normal(9999.0, 500.0, size=len(df_clean) - t_idx - 1)
+    rng = np.random.default_rng(999 + t_idx)
+    if perturbation_type == "extreme":
+        for col in INPUT_COLS:
+            df_perturbed.iloc[t_idx + 1 :, df_perturbed.columns.get_loc(col)] = rng.normal(
+                9999.0, 500.0, size=len(df_clean) - t_idx - 1
+            )
+    elif perturbation_type == "nan":
+        df_perturbed.iloc[t_idx + 1 :, df_perturbed.columns.isin(INPUT_COLS)] = np.nan
 
     feats_clean = build_features(df_clean, groups="all")
     feats_perturbed = build_features(df_perturbed, groups="all")
@@ -154,35 +173,42 @@ def test_no_target_or_deployment_leakage(synthetic_hourly_grid):
 
 
 def test_gap_integrity_lags_do_not_bridge_gaps():
-    """acceptance criterion 3: a lag across a gap in the time grid yields NaN, not previous row's value."""
-    # Create an artificial non-consecutive timeline with a 2-hour gap:
-    # 10:00, 11:00, [GAP at 12:00], 13:00, 14:00
+    """acceptance criterion 3: lags across unobserved hours produce NaN, not previous rows' values."""
+    # Timeline with missing gaps:
+    # Day 1: 10:00, 12:00 (11:00 is missing)
+    # Day 2: 10:00 (24h after Day 1 10:00), 11:00 (24h after Day 1 11:00, which was missing), 12:00 (24h after Day 1 12:00)
     times = pd.to_datetime([
         "2004-05-01 10:00:00",
-        "2004-05-01 11:00:00",
-        "2004-05-01 13:00:00",  # 2 hours after 11:00 (12:00 missing)
-        "2004-05-01 14:00:00",
+        "2004-05-01 12:00:00",  # 1h earlier (11:00) missing from grid
+        "2004-05-02 10:00:00",  # 24h earlier (Day 1 10:00) exists
+        "2004-05-02 11:00:00",  # 24h earlier (Day 1 11:00) missing from grid
+        "2004-05-02 12:00:00",  # 24h earlier (Day 1 12:00) exists
     ])
     df_gap = pd.DataFrame(
-        {col: [100.0, 200.0, 300.0, 400.0] for col in SENSOR_COLS},
+        {col: [100.0, 200.0, 300.0, 400.0, 500.0] for col in SENSOR_COLS},
         index=times,
     )
-    df_gap["T"] = [15.0, 16.0, 17.0, 18.0]
-    df_gap["RH"] = [50.0, 50.0, 50.0, 50.0]
-    df_gap["AH"] = [1.0, 1.0, 1.0, 1.0]
+    df_gap["T"] = 20.0
+    df_gap["RH"] = 50.0
+    df_gap["AH"] = 1.0
 
     feats = build_features(df_gap, groups="lags")
 
-    # At 11:00, 1h lag is 10:00 (value = 100.0)
-    assert feats.loc["2004-05-01 11:00:00", "PT08.S1(CO)_lag_1h"] == 100.0
+    # 1h lag assertions:
+    # At 2004-05-01 12:00, 1h earlier would be 11:00 (which is unobserved in the grid).
+    # It MUST yield NaN, not silently bridge to 10:00 (100.0)!
+    assert np.isnan(feats.loc["2004-05-01 12:00:00", "PT08.S1(CO)_lag_1h"])
+    # At 2004-05-02 11:00, 1h earlier is 10:00 (present with value 300.0)
+    assert feats.loc["2004-05-02 11:00:00", "PT08.S1(CO)_lag_1h"] == 300.0
 
-    # At 13:00, 1h earlier would be 12:00 (which is missing / unobserved in the grid)
-    # If the function silently shifted by row, it would erroneously give 200.0.
+    # 24h lag assertions:
+    # At 2004-05-02 10:00, 24h lag is 2004-05-01 10:00 (present with value 100.0)
+    assert feats.loc["2004-05-02 10:00:00", "PT08.S1(CO)_lag_24h"] == 100.0
+    # At 2004-05-02 11:00, 24h earlier is 2004-05-01 11:00 (unobserved in the grid).
     # It MUST yield NaN!
-    assert np.isnan(feats.loc["2004-05-01 13:00:00", "PT08.S1(CO)_lag_1h"])
-
-    # At 14:00, 1h lag is 13:00 (value = 300.0)
-    assert feats.loc["2004-05-01 14:00:00", "PT08.S1(CO)_lag_1h"] == 300.0
+    assert np.isnan(feats.loc["2004-05-02 11:00:00", "PT08.S1(CO)_lag_24h"])
+    # At 2004-05-02 12:00, 24h lag is 2004-05-01 12:00 (present with value 200.0)
+    assert feats.loc["2004-05-02 12:00:00", "PT08.S1(CO)_lag_24h"] == 200.0
 
 
 def test_longest_lookback_constant():
